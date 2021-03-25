@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <math.h>
 #include <stdbool.h>
 #include <string.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 
 #define HTTP_VERSION "HTTP/1.1"
 #define INITIAL_HEADER_SIZE 10
+#define HTTP_CONTENT_LENGTH "Content-Length"
 
 #define BUFFER_RESIZE_FACTOR 2
 #define NEWLINE '\n'
@@ -34,7 +36,7 @@ const char* convert_method_to_string(HttpMethod header) {
 
 size_t write_line_to_request(char** buffer, size_t* buffer_size, size_t offset, char* str) {
     size_t length = strlen(str);
-    if (offset + length >= *buffer_size) {
+    if (offset + length + 1>= *buffer_size) {
 	*buffer = (char*)realloc((void*)*buffer, *buffer_size * BUFFER_RESIZE_FACTOR);
 	*buffer_size = *buffer_size * BUFFER_RESIZE_FACTOR;
 	if (*buffer == NULL) {
@@ -42,18 +44,18 @@ size_t write_line_to_request(char** buffer, size_t* buffer_size, size_t offset, 
 	}
     }
 
+    strncat(*buffer, str, length);
     strncpy(*buffer + offset, str, length);
-    (*buffer)[offset+length+1] = NEWLINE;
 
-    return offset + length + 1;    
+    return offset + length;
 }
 
 size_t write_header_to_request(char** buffer, size_t* buffer_size, size_t offset, HttpHeader header) {
     size_t keySize = strlen(header.key);
     size_t valueSize = strlen(header.value);
 
-    char* line = malloc(keySize + valueSize + 4);
-    snprintf(line, keySize + valueSize + 4, "%s: %s\r\n", header.key, header.value);
+    char* line = malloc(keySize + valueSize + 5);
+    snprintf(line, keySize + valueSize + 5, "%s: %s\r\n", header.key, header.value);
 
     size_t newOffset = write_line_to_request(buffer, buffer_size, offset, line);
     free(line);
@@ -62,7 +64,7 @@ size_t write_header_to_request(char** buffer, size_t* buffer_size, size_t offset
 }
 
 void parse_http_response_first_line(HttpResponse* response, const char* buffer, size_t lineLen) {
-    char* lineBuffer = (char*)malloc((lineLen+1) * sizeof(char));
+    char* lineBuffer = (char*)malloc(lineLen+1);
     strncpy(lineBuffer, buffer, lineLen);
     lineBuffer[lineLen+1] = '\0';
 
@@ -142,6 +144,9 @@ HttpResponse* read_http_response(int socket) {
     char* buffer = (char*)calloc(INIT_HTTP_RECV_SIZE+1, sizeof(char));
     ssize_t recvSize = recv_msg(socket, buffer, INIT_HTTP_RECV_SIZE);
 
+    printf("Received message of size %zd\n", recvSize);
+    printf("Response content: %s\n", buffer);
+
     char* lineEnding = strstr(buffer, "\r\n");
     if (lineEnding == NULL) {
 	abort();
@@ -163,9 +168,22 @@ HttpResponse* read_http_response(int socket) {
 	response->bodySize = 0;
     } else if (recvSize - (bytesRead + firstLineLen) >= contentLength) {
 	response->body = malloc(contentLength+1);
-	strncpy(response->body, buffer+bytesRead + firstLineLen, contentLength);
+	memcpy(response->body, buffer+bytesRead + firstLineLen, contentLength);
 	response->body[contentLength] = '\0';
-	response->bodySize = strlen(response->body);
+	response->bodySize = contentLength;
+    } else {
+	puts("Buffer missing enough data to fit content length");
+	printf("RecvSize: %zd\nBytesRead: %zd\nFirstLineLen: %zd\nContentLength: %d\n", recvSize, bytesRead, firstLineLen, contentLength);
+	if (recvSize + contentLength > INIT_HTTP_RECV_SIZE) {
+	    puts("Request body too large to fit in data buffer");
+	    abort();
+	}
+
+	recv_msg(socket, buffer+recvSize, contentLength);
+	response->body = malloc(contentLength+1);
+	memcpy(response->body, buffer+bytesRead + firstLineLen, contentLength);
+	response->body[contentLength] = '\0';
+	response->bodySize = contentLength;
     }
 
     free(buffer);
@@ -188,14 +206,41 @@ HttpResponse* send_request(int socket, HttpRequest* request) {
 
     buffer_pos = written;
 
+    if (request->method == POST) {
+	HttpHeader contentLengthHeader;
+	contentLengthHeader.key = HTTP_CONTENT_LENGTH;
+
+	int numDigits = (int) ceil(log10((double)request->bodySize));
+	char* bodySizeStr = (char*)calloc(numDigits+1, sizeof(char));
+	snprintf(bodySizeStr, numDigits+1, "%zu", request->bodySize);
+	bodySizeStr[numDigits] = '\0';
+	contentLengthHeader.value = bodySizeStr;
+    
+	add_header(request, contentLengthHeader);
+
+	HttpHeader contentTypeHeader;
+	contentTypeHeader.key = "Content-Type";
+	contentTypeHeader.value = "application/json";
+	add_header(request, contentTypeHeader);
+    }
+
     for (unsigned int i = 0; i < request->numHeaders; ++i) {
 	buffer_pos = write_header_to_request(&payload, &buffer_size, buffer_pos, request->headers[i]);
     }
-    payload[buffer_pos+1] = '\r';
-    payload[buffer_pos+2] = '\n';
+    payload[buffer_pos] = '\r';
+    payload[buffer_pos+1] = '\n';
+    buffer_pos += 2;
+
+    if (request->method == POST) {
+	memcpy(payload+buffer_pos, request->body, request->bodySize);
+	buffer_pos += request->bodySize;
+	/* payload[buffer_pos] = '\r'; */
+	/* payload[buffer_pos+1] = '\n'; */
+	/* buffer_pos += 2; */
+    }
 	    
     puts(payload);
-    send_msg(socket, payload, buffer_size);
+    send_msg(socket, payload, buffer_pos);
 
     free(payload);
 

@@ -1,12 +1,12 @@
 import http.server
 import json
 
-
+first = True
 class AwsLambdaHttpRequestHandler(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.protocol_version = "HTTP/1.1"
-        if self.path == "/runtime/invocation/next":
+        if self.path == "/2018-06-01/runtime/invocation/next":
             body = json.dumps({"banana": 10}).encode("utf-8")
             body_length = len(body)
 
@@ -19,12 +19,20 @@ class AwsLambdaHttpRequestHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
             self.wfile.write(body)
-            
+            self.close_connection = False
         else:
             self.send_error(400, "Unknown path")
 
     def do_POST(self):
-        pass
+        self.protocol_version = "HTTP/1.1"
+
+        content_len = int(self.headers['Content-Length'])
+        post_body = self.rfile.read(content_len).decode('utf-8')
+        print(f"Request body: {post_body}")
+        
+        self.send_response(202)
+        self.send_header("Content-Length", 0)
+        self.end_headers()
 
 
 def main():

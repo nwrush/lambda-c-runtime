@@ -3,7 +3,7 @@
 
 #include <sys/types.h>
 
-int connect_addr(const char*);
+int connect_addr(const char*, int);
 
 ssize_t send_msg(int, const void*, size_t);
 

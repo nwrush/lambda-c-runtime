@@ -1,31 +1,90 @@
+#include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
-#include "cJSON.h"
 #include "http.h"
 #include "tcp.h"
 
+#define HANDLER_ENV_NAME "_HANDLER"
+#define TASK_ROOT_ENV_NAME "LAMBDA_TASK_ROOT"
+#define RUNTIME_API_ENV_NAME "AWS_LAMBDA_RUNTIME_API"
+
+#define INIT_ERROR_PATH "/2018-06-01/runtime/init/error"
+#define NEXT_INVOKE_PATH "/2018-06-01/runtime/invocation/next"
+#define SUCCESS_RESPONSE_PATH_FORMAT "/2018-06-01/runtime/invocation/%s/response"
+#define SUCCESS_RESPONSE_PATH_SIZE 41
+#define ERROR_RESPONSE_PATH_FORMAT "/2018-06-01/runtime/invocation/%s/error"
+#define ERROR_RESPONSE_PATH_SIZE 38
+
+
+void testFunction(char* buffer, size_t size) {
+    puts("hello");
+    puts(buffer);
+}
+
+int sendFunctionSuccess(int socket, char* requestId, char* buffer, size_t bufferSize, HttpHeader hostHeader) {
+    HttpRequest* request = create_request(POST);
+    add_header(request, hostHeader);
+
+    size_t respPathLength = SUCCESS_RESPONSE_PATH_SIZE + strlen(requestId);
+    char respPath[respPathLength+1];
+    snprintf(respPath, respPathLength+1, SUCCESS_RESPONSE_PATH_FORMAT, requestId);
+    
+    request->path = respPath;
+    request->body = buffer;
+    request->bodySize = bufferSize;
+
+    HttpResponse* response = send_request(socket, request);
+
+    free_request(request);
+    // free(buffer);
+    free_response(response);
+}
+
+int invokeFunction(int socket, HttpHeader hostHeader) {
+    HttpRequest* request = create_request(GET);
+    add_header(request, hostHeader);
+
+    request->path = NEXT_INVOKE_PATH;
+    
+    HttpResponse* response = send_request(socket, request);
+    
+    free_request(request);
+    if (response->responseCode != 200) {
+    	puts("Received non 200 response from next");
+    	printf("%d\n", response->responseCode);
+    	return -1;
+    }
+    testFunction(response->body, response->bodySize);
+    free_response(response);
+
+    sendFunctionSuccess(socket, "8476a536-e9f4-11e8-9739-2dfe598c3fcd", "banana", 6, hostHeader);
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    int tcp_socket = connect_addr("127.0.0.1");
+    char* apiEndpoint = getenv(RUNTIME_API_ENV_NAME);
+
+    size_t len = strlen(apiEndpoint);
+    char endpointCopy[len+1];
+    strncpy(endpointCopy, apiEndpoint, len);
+    endpointCopy[len] = '\0';
+
+    char* hostname = strtok(endpointCopy, ":");
+    int port = atoi(strtok(NULL, ":"));
+
+    int tcp_socket = connect_addr(hostname, port);
+
+    if (tcp_socket == -1) {
+	puts("Failed to create tcp connection. Exiting");
+	printf("Error message: %d - %s\n", errno, strerror(errno));
+	return 1;
+    }
 
     HttpHeader hostHeader;
     hostHeader.key = "Host";
-    hostHeader.value = "127.0.0.1";
+    hostHeader.value = hostname;
 
-    HttpRequest* request = create_request(GET);
-    
-    request->path = "/runtime/invocation/next";
-    add_header(request, hostHeader);
-
-    HttpResponse* response = send_request(tcp_socket, request);
-
-    printf("%d\n", response->responseCode);
-    printf("Found %d http headers\n", response->numHeaders);
-    for (size_t i = 0; i < response->numHeaders; ++i) {
-	printf("%s: %s\n", response->headers[i].key, response->headers[i].value);
-    }
-
-    printf("Data: %s\n", response->body);
-
-    free_request(request);
-    free_response(response);
+    invokeFunction(tcp_socket, hostHeader);
 }
