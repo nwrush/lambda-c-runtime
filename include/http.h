@@ -37,6 +37,6 @@ void free_request(HttpRequest*);
 void free_response(HttpResponse*);
 
 // Utility methods
-HttpHeader* find_header(HttpResponse*, const char*);
+HttpHeader* http_find_header(HttpResponse*, const char*);
 
 #endif

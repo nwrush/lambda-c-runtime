@@ -156,7 +156,7 @@ HttpResponse* read_http_response(int socket) {
     parse_http_response_first_line(response, buffer, lineEnding - buffer);
     size_t bytesRead = parse_http_response_headers(response, lineEnding + 2, strlen(lineEnding));
 
-    HttpHeader* header = find_header(response, "Content-Length");
+    HttpHeader* header = http_find_header(response, "Content-Length");
     if (header == NULL) {
 	// Assume the content length is 0
 	return response;

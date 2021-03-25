@@ -9,6 +9,7 @@
 #define HANDLER_ENV_NAME "_HANDLER"
 #define TASK_ROOT_ENV_NAME "LAMBDA_TASK_ROOT"
 #define RUNTIME_API_ENV_NAME "AWS_LAMBDA_RUNTIME_API"
+#define REQUEST_ID_HEADER "Lambda-Runtime-Aws-Request-Id"
 
 #define INIT_ERROR_PATH "/2018-06-01/runtime/init/error"
 #define NEXT_INVOKE_PATH "/2018-06-01/runtime/invocation/next"
@@ -23,7 +24,7 @@ void testFunction(char* buffer, size_t size) {
     puts(buffer);
 }
 
-int sendFunctionSuccess(int socket, char* requestId, char* buffer, size_t bufferSize, HttpHeader hostHeader) {
+int sendFunctionSuccess(int socket, const char* requestId, char* buffer, size_t bufferSize, HttpHeader hostHeader) {
     HttpRequest* request = create_request(POST);
     add_header(request, hostHeader);
 
@@ -56,10 +57,16 @@ int invokeFunction(int socket, HttpHeader hostHeader) {
     	printf("%d\n", response->responseCode);
     	return -1;
     }
+    HttpHeader* requestIdHeader = http_find_header(response, REQUEST_ID_HEADER);
+    if (requestIdHeader == NULL) {
+	puts(REQUEST_ID_HEADER" header not present");
+	abort();
+    }
+    
     testFunction(response->body, response->bodySize);
-    free_response(response);
+    sendFunctionSuccess(socket, requestIdHeader->value, "banana", 6, hostHeader);
 
-    sendFunctionSuccess(socket, "8476a536-e9f4-11e8-9739-2dfe598c3fcd", "banana", 6, hostHeader);
+    free_response(response);
     return 0;
 }
 
