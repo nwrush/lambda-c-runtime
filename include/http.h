@@ -3,6 +3,8 @@
 
 #include <sys/types.h>
 
+#include "tcp.h"
+
 typedef enum HTTP_METHOD{GET, POST} HttpMethod;
 
 typedef struct {
@@ -29,7 +31,7 @@ typedef struct {
     size_t bodySize;
 } HttpResponse;
 
-HttpResponse* send_request(int, HttpRequest*);
+HttpResponse* send_request(tcp_conn*, HttpRequest*);
 
 HttpRequest* create_request(HttpMethod);
 void add_header(HttpRequest*, HttpHeader);

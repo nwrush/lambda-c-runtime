@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "lambda_runtime.h"
 #include "http.h"
 #include "tcp.h"
 
@@ -19,12 +20,25 @@
 #define ERROR_RESPONSE_PATH_SIZE 38
 
 
-void testFunction(char* buffer, size_t size) {
-    puts("hello");
-    puts(buffer);
+static tcp_conn* connection;
+static HttpHeader hostHeader;
+
+
+LambdaHandlerResponse testFunction(LambdaContext* context) {
+    puts(context->body);
+
+    LambdaHandlerResponse response;
+    response.body = "apple";
+    response.size = 5;
+    return response;
 }
 
-int sendFunctionSuccess(int socket, const char* requestId, char* buffer, size_t bufferSize, HttpHeader hostHeader) {
+int sendFunctionError(const char* message, const char* type) {
+    HttpRequest* request = create_request(POST);
+    return 0;
+}
+
+HttpResponse* sendFunctionSuccess(const char* requestId, LambdaHandlerResponse resp) {
     HttpRequest* request = create_request(POST);
     add_header(request, hostHeader);
 
@@ -33,42 +47,71 @@ int sendFunctionSuccess(int socket, const char* requestId, char* buffer, size_t 
     snprintf(respPath, respPathLength+1, SUCCESS_RESPONSE_PATH_FORMAT, requestId);
     
     request->path = respPath;
-    request->body = buffer;
-    request->bodySize = bufferSize;
+    request->body = resp.body;
+    request->bodySize = resp.size;
 
-    HttpResponse* response = send_request(socket, request);
+    HttpResponse* response = send_request(connection, request);
 
     free_request(request);
-    // free(buffer);
-    free_response(response);
+    return response;
 }
 
-int invokeFunction(int socket, HttpHeader hostHeader) {
+HttpResponse* getNextInvocation() {
     HttpRequest* request = create_request(GET);
     add_header(request, hostHeader);
 
     request->path = NEXT_INVOKE_PATH;
     
-    HttpResponse* response = send_request(socket, request);
+    HttpResponse* response = send_request(connection, request);
     
     free_request(request);
+    request = NULL;
+
     if (response->responseCode != 200) {
     	puts("Received non 200 response from next");
     	printf("%d\n", response->responseCode);
-    	return -1;
+    	return NULL;
     }
     HttpHeader* requestIdHeader = http_find_header(response, REQUEST_ID_HEADER);
     if (requestIdHeader == NULL) {
 	puts(REQUEST_ID_HEADER" header not present");
 	abort();
     }
-    
-    testFunction(response->body, response->bodySize);
-    sendFunctionSuccess(socket, requestIdHeader->value, "banana", 6, hostHeader);
 
-    free_response(response);
-    return 0;
+    return response;
 }
+
+LambdaContext createContextFromResponse(HttpResponse* response) {
+    LambdaContext context;
+    context.body = response->body;
+    context.size = response->bodySize;
+
+    return context;
+}
+
+void handleRequests(lambda_handler_f handler) {
+    int shouldLoop = 1;
+    while (shouldLoop) {
+	HttpResponse* nextResponse = getNextInvocation();
+	HttpHeader* requestIdHeader = http_find_header(nextResponse, REQUEST_ID_HEADER);
+
+	LambdaContext context = createContextFromResponse(nextResponse);
+
+	LambdaHandlerResponse handlerResp = handler(&context);
+	
+	HttpResponse* response = sendFunctionSuccess(requestIdHeader->value, handlerResp);
+
+	if (response->responseCode == 500) {
+	    puts("Error posting invocation response");
+	    shouldLoop = 0;
+	}
+	
+	free_response(nextResponse);
+	free_response(response);
+	// free(handlerResp.body);
+	handlerResp.body = NULL;
+    }
+} 
 
 int main(int argc, char** argv) {
     char* apiEndpoint = getenv(RUNTIME_API_ENV_NAME);
@@ -81,17 +124,19 @@ int main(int argc, char** argv) {
     char* hostname = strtok(endpointCopy, ":");
     int port = atoi(strtok(NULL, ":"));
 
-    int tcp_socket = connect_addr(hostname, port);
+    connection = connect_addr(hostname, port);
 
-    if (tcp_socket == -1) {
+    if (connection == NULL) {
 	puts("Failed to create tcp connection. Exiting");
 	printf("Error message: %d - %s\n", errno, strerror(errno));
 	return 1;
     }
 
-    HttpHeader hostHeader;
     hostHeader.key = "Host";
     hostHeader.value = hostname;
 
-    invokeFunction(tcp_socket, hostHeader);
+    handleRequests(&testFunction);
+
+    tcp_free_conn(connection);
+    connection = NULL;
 }

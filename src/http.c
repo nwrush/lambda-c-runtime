@@ -138,11 +138,11 @@ size_t parse_http_response_headers(HttpResponse* response, const char* buffer, s
     return pos;
 }
 
-HttpResponse* read_http_response(int socket) {
+HttpResponse* read_http_response(tcp_conn* connection) {
     HttpResponse* response = create_http_response();
 
     char* buffer = (char*)calloc(INIT_HTTP_RECV_SIZE+1, sizeof(char));
-    ssize_t recvSize = recv_msg(socket, buffer, INIT_HTTP_RECV_SIZE);
+    ssize_t recvSize = recv_msg(connection, buffer, INIT_HTTP_RECV_SIZE);
 
     printf("Received message of size %zd\n", recvSize);
     printf("Response content: %s\n", buffer);
@@ -179,7 +179,7 @@ HttpResponse* read_http_response(int socket) {
 	    abort();
 	}
 
-	recv_msg(socket, buffer+recvSize, contentLength);
+	recv_msg(connection, buffer+recvSize, contentLength);
 	response->body = malloc(contentLength+1);
 	memcpy(response->body, buffer+bytesRead + firstLineLen, contentLength);
 	response->body[contentLength] = '\0';
@@ -191,7 +191,7 @@ HttpResponse* read_http_response(int socket) {
     return response;
 }
 
-HttpResponse* send_request(int socket, HttpRequest* request) {
+HttpResponse* send_request(tcp_conn* connection, HttpRequest* request) {
     char* payload = (char*)calloc(1024, 1);
 
     size_t buffer_size = 1024;
@@ -234,17 +234,14 @@ HttpResponse* send_request(int socket, HttpRequest* request) {
     if (request->method == POST) {
 	memcpy(payload+buffer_pos, request->body, request->bodySize);
 	buffer_pos += request->bodySize;
-	/* payload[buffer_pos] = '\r'; */
-	/* payload[buffer_pos+1] = '\n'; */
-	/* buffer_pos += 2; */
     }
 	    
     puts(payload);
-    send_msg(socket, payload, buffer_pos);
+    send_msg(connection, payload, buffer_pos);
 
     free(payload);
 
-    return read_http_response(socket);
+    return read_http_response(connection);
 }
 
 HttpRequest* create_request(HttpMethod method) {
@@ -288,6 +285,7 @@ void add_header_resp(HttpResponse* response, HttpHeader header) {
 
 void free_request(HttpRequest* request) {
     free(request->headers);
+    request->headers = NULL;
     free(request);
 }
 
@@ -299,5 +297,7 @@ void free_response(HttpResponse* response) {
     }
     free(response->headers);
     free(response->body);
+    response->headers = NULL;
+    response->body = NULL;
     free(response);
 }
