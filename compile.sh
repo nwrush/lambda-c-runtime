@@ -18,6 +18,6 @@ cd "$BUILD_ROOT/obj"
 
 gcc -std=c99 -g -Wall -c -I../include/ ../src/*.c
 
-gcc -std=c99 -g -Wall -lm -o ../bin/c-runtime *.o
+gcc -std=c99 -g -Wall -lm -ldl -o ../bin/c-runtime *.o
 
 cp ../bin/c-runtime $INVOKE_LOC
